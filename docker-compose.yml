@@ -1,0 +1,36 @@
+# Local run: cp .env.example .env, then docker compose up --build
+services:
+  db:
+    image: mariadb:11.1
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: country_availability
+      MARIADB_USER: app
+      MARIADB_PASSWORD: ${DB_PASSWORD:?copy .env.example to .env}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?copy .env.example to .env}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      retries: 20
+    volumes:
+      - db-data:/var/lib/mysql
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      SIMULATION_MODE: "1"   # simulated probes; 0 would use real SSH probes
+      SEED_DEMO: "1"         # load demo probes and rules into an empty database
+      DATABASE_URL: mysql+pymysql://app:${DB_PASSWORD}@db:3306/country_availability
+
+  frontend:
+    build: ./quasar_frontend
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - "${FRONTEND_PORT:-5440}:80"
+
+volumes:
+  db-data:

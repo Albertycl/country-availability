@@ -1,0 +1,13 @@
+flask
+gunicorn
+waitress
+python-dotenv
+requests
+paramiko
+flask-sqlalchemy
+flask-migrate
+pymysql
+flask-cors
+apscheduler
+pytz
+cryptography

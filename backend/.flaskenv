@@ -1,0 +1,4 @@
+FLASK_APP=main_testing_jenny_excel
+FLASK_DEBUG=1
+FLASK_RUN_PORT=5030
+FLASK_RUN_HOST=0.0.0.0

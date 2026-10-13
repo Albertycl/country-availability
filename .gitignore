@@ -1,0 +1,11 @@
+# Ignore PNG files
+*.png
+
+# Ignore specific directories
+backend/node_modules/
+.env
+__pycache__/
+*.pyc
+.vscode/
+node_modules/
+dist/
