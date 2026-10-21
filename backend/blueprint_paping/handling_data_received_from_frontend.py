@@ -420,7 +420,7 @@ def check_if_the_probe_can_access_internet_or_not_by_country_filter(which_countr
             
             
 # # ****************************************************************************************************************
-@handling_data_received_from_frontend.route('/fixing_curl_cannot_get_the_contain_issue/<url>')
+# Internal helper only (no HTTP route): it fetches a probe result URL built by the backend.
 def fixing_curl_cannot_get_the_contain_issue(url):
 # @handling_data_received_from_frontend.route('/fixing_curl_cannot_get_the_contain_issue')
 # @handling_data_received_from_frontend.route('/fixing_curl_cannot_get_the_contain_issue/')

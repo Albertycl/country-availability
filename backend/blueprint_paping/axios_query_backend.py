@@ -21,6 +21,17 @@ from model import db, a01_probe_list, a20_url_from_jenney_excel, a30_availiblity
 axios_query_backend = Blueprint("axios_query_backend", __name__)
 CORS(axios_query_backend)
 
+# Only fetch curl result files from known probes (http://<probe_ip>:8787/<file>).
+# Any other URL is refused, so these routes cannot be used to reach other hosts.
+_PROBE_RESULT_URL = re.compile(r"http://(\d{1,3}(?:\.\d{1,3}){3}):8787/[^\s#\\]+")
+
+
+def _is_probe_result_url(url):
+    match = _PROBE_RESULT_URL.fullmatch(url or "")
+    if not match:
+        return False
+    return a01_probe_list.query.filter_by(probe_ip=match.group(1)).first() is not None
+
 
 ##############################################################################################################################################
 @axios_query_backend.route('/a05_pass_root_wwww_m_aff_and_update_the_urls_to_test')
@@ -98,10 +109,12 @@ def proxy_curl_result():
     curl_url = request.args.get('url')
     if not curl_url:
         return jsonify({"error": "Missing url parameter"}), 400
+    if not _is_probe_result_url(curl_url):
+        return jsonify({"error": "Only probe result URLs are allowed"}), 400
 
     try:
         import requests
-        response = requests.get(curl_url, timeout=10)
+        response = requests.get(curl_url, timeout=10, allow_redirects=False)
         if response.status_code == 200:
             return response.text, 200, {'Content-Type': 'text/plain; charset=utf-8'}
         else:
@@ -140,7 +153,9 @@ def open_link(url_to_open="192.0.2.10:8787_jenny_excel_www.baidu.com__result_192
     # url="http://192.0.2.10:8787/jenny_excel_www.baidu.com__result_192.0.2.10_2022_12_05_04_24_40"
     url_after_replace = url_to_open.replace("8787_", "8787/")
     url_to_open_finally = f"http://{url_after_replace}"
-    resopnse_from_each_ge_server = requests.get(url_to_open_finally).text
+    if not _is_probe_result_url(url_to_open_finally):
+        return jsonify({"error": "Only probe result URLs are allowed"}), 400
+    resopnse_from_each_ge_server = requests.get(url_to_open_finally, timeout=10, allow_redirects=False).text
     print(f"resopnse_from_each_ge_server={resopnse_from_each_ge_server}")
     resopnse_from_each_ge_server = resopnse_from_each_ge_server.replace("0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0", "").replace("% Total", "").replace("% Received", "").replace("% Xferd", "").replace("Average Speed   Time    Time     Time  Current", "").replace("Dload  Upload   Total   Spent    Left  Speed", "").replace("0  ", "").replace("277", "").replace("\n\n", "\n").replace("0 --:--:--  0:00:01 --:--:--     0", "").replace("0 --:--:--  0:00:02 --:--:--     0", "").replace("146", "").replace("0 21326", "").replace("0 21233", "").replace("249", "").replace("curl: (28)", "").replace("0 --:--:--  0:00:03 --:--:--", "").replace("curl: (6)", "").replace("curl: (7)", "").replace(
         "0 --:--:--  0:00:04 --:--:--     0", "").replace("0 --:--:--  0:00:04 --:--:--     0 266", "").replace("0 --:--:--  0:00:05 --:--:--     0", "").replace("0 --:--:--  0:00:06 --:--:--     0", "").replace("0 --:--:--  0:00:07 --:--:--     0", "").replace("0 --:--:--  0:00:08 --:--:--", "").replace("0 --:--:--  0:00:09 --:--:--     0", "").replace("0 --:--:--  0:00:06 --:--:--     0", "").replace("0 --:--:--  0:00:10 --:--:--     0", "").replace("0 --:--:--  0:00:06 --:--:--     0", "").replace("  ", " ").replace("   ", " ").replace("  ", " ").replace("  ", " ").replace("  ", " ").replace("  ", " ").replace("  ", " ").replace("curl: (35)", "").replace("0 266", "").replace("--:--:--", "").replace("0:00:", "")
