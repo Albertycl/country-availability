@@ -1,99 +1,47 @@
-# Country Availability
+# Country-availability
 
-A small web app that answers one question: **"Can people in country X open this website right now?"**
+**Live demo:** https://availability.albertycliu.xyz (made-up probes, no login)
 
-You enter URLs and pick countries. The app asks probe servers in those countries to fetch each URL, judges each answer with rules stored in a database, and shows the availability per country (for example "China 0%, Thailand 100%"). A scheduler can repeat the check every hour and keep a history.
+A web tool that answers one question: "Can people in country X open this website right now?" Pick URLs and countries, and it shows the availability per country, for example "China 0%, Thailand 100%".
 
-> **This repository is a demo.** The real system SSHes into probe servers abroad. Here every probe is **simulated** inside the backend (`backend/simulation.py`), so the app runs anywhere with no remote servers. All hosts, IPs and names in the demo data are made up (documentation IP ranges, `.example` domains).
+![Example result: the same two sites tested from China and Thailand, with the per-probe details below](docs/screenshot.png)
 
-## Why it matters for an SRE job
+## What it does
 
-| Skill | Where to see it |
-|-------|-----------------|
-| Containers | One Dockerfile per component, a self-contained `docker-compose.yml` |
-| CI/CD | `.github/workflows/ci.yml`: test, build and push images to GHCR, then update the GitOps repo |
-| GitOps | Argo CD watches [`Albertycl/gitops-apps`](https://github.com/Albertycl/gitops-apps) (`manifests/country-availability/`); nobody runs `kubectl apply` for releases |
-| Kubernetes | Deployments, Services, a MariaDB StatefulSet with a PVC, Secrets created by hand, readiness probes, resource limits |
-| Rollback | `git revert` of one commit in the GitOps repo |
-| Observability of the app itself | Health and scheduler status endpoints, logs on stdout |
-| Demo without the real world | A fake transport layer lets the real logic (rules, maths, scheduler) run with no remote servers |
+- Asks probe servers in several countries to fetch each URL, then judges every answer with rules stored in a database (failure text, success marker, or "unknown").
+- Shows the availability per country and the raw result of every probe, and can repeat the check every hour to keep a history.
+- The probes are simulated (the real servers no longer exist). Try `https://www.blocked-demo.example` (fails from China) and `https://www.demo-site-one.example` (healthy) with China and Thailand selected.
 
-Deliberately simple: one replica of everything, no ingress or TLS (use `kubectl port-forward`), no authentication, no metrics endpoint.
+## How it works
 
-## Architecture
+![Architecture: how a code change reaches the cluster, and how a request is served](docs/architecture.svg)
 
-| Component | Tech | Notes |
-|-----------|------|-------|
-| frontend | Vue 3 + Quasar, served by nginx | nginx proxies `/be/` to the backend, so the browser only talks to one origin |
-| backend | Flask, SQLAlchemy, Waitress, APScheduler | Blueprints for the test flow, whitelist rules and scheduled monitoring |
-| database | MariaDB 11.1 | Probe list, URLs, results, whitelist rules, scheduled domains and history |
-| probes | Simulated (`SIMULATION_MODE=1`) | With `0` the backend uses Paramiko to SSH into real probes and curl from there |
+Code goes to GitHub, GitHub Actions builds the images and updates the [Gitops-apps](https://github.com/Albertycl/Gitops-apps) repo, and Argo CD deploys the change to a K3s cluster by itself.
 
-Request flow:
+## SRE skills this shows
 
-1. The browser sends URLs and countries to the frontend nginx, which forwards `/be/...` to the backend.
-2. The backend takes the probes of those countries from the database and runs `curl` on each probe. (Simulated: a fake SSH client answers in-process.)
-3. The backend reads each probe's curl output and judges it with the whitelist rules in the database: failure rules (error text such as "Could not resolve host") and success rules (a marker in the page). Anything else counts as "unknown".
-4. It stores the result per probe, calculates availability per country and returns it to the UI.
+- **GitOps and CI/CD:** GitHub Actions, GHCR, Argo CD with auto sync and self-heal.
+- **Rollback:** `git revert` of the "country-availability: deploy" commit in Gitops-apps.
+- **Containers:** one Dockerfile per component and a self-contained Docker Compose file.
+- **Configuration:** the database password comes from an environment variable or a Kubernetes Secret, never from Git.
+- **Kubernetes:** MariaDB StatefulSet with a volume, Traefik ingress with a Let's Encrypt certificate (cert-manager), readiness probes (health checks), resource requests and limits.
+- **Testing without the real world:** a fake transport layer lets the real logic (rules, maths, scheduler) run with no remote servers.
 
-### Simulation rules
+## Run it locally
 
-The host name of the URL decides what the fake probes see:
-
-| Keyword in the host | Result |
-|---------------------|--------|
-| `down` | fails from every country |
-| `blocked` | fails from China only |
-| `partial` | about half of the probes fail |
-| `unknown` | Malaysia and Thailand get a page that no rule recognises |
-| anything else | decided by a hash of the name: mostly healthy, sometimes blocked in one country |
-
-Try `https://www.blocked-demo.example` and `https://www.demo-site-one.example` with China and Thailand selected.
-
-## Install and run
-
-### A. Locally with Docker Compose
-
-Prerequisites: Docker with the Compose plugin.
+Needs Docker with the Compose plugin.
 
 ```bash
-cp .env.example .env        # set DB_PASSWORD and DB_ROOT_PASSWORD; FRONTEND_PORT is optional (default 5440)
+cp .env.example .env     # set DB_PASSWORD and DB_ROOT_PASSWORD
 docker compose up --build
 ```
 
-Open `http://localhost:5440`. The first start creates the tables and loads the demo probes and rules (`backend/demo/seed_demo_data.sql`) because `SEED_DEMO=1` and the database is empty. Pages: `/filtered` (run a test), `/whitelist` (rules). The scheduled-monitoring page is at `/scheduled`; it is not in the menu.
+Then open `http://localhost:5440` and use the page `/filtered`. The database loads the demo data on its first start.
 
-Stop with `docker compose down` (add `-v` to delete the database volume).
+## Known limits
 
-### B. On Kubernetes (K3s) with Argo CD
+No login: the public demo is open on purpose because the probes are simulated and the data is made up. Add authentication before using real probes or data.
 
-1. Install Argo CD, then apply the app-of-apps once (from the GitOps repo): `kubectl apply -f argocd/root-app.yaml`. Argo CD then creates the application from `apps/country-availability.yaml` and the `country-availability` namespace.
-2. Create the Secret by hand, once the namespace exists (names and keys only; choose your own values):
-   ```bash
-   kubectl -n country-availability create secret generic country-db \
-     --from-literal=root-password='<choose>' \
-     --from-literal=database-url='mysql+pymysql://root:<same password>@mariadb:3306/country_availability'
-   ```
-   The pods wait until the Secret exists.
-3. After the first CI run, set both GHCR packages (`country-availability-backend`, `country-availability-frontend`) to **public**. The manifests use no `imagePullSecrets`, so until then pods show `ImagePullBackOff`.
-4. Check: `kubectl get applications -n argocd` should show `country-availability` as `Synced` and `Healthy`, and `kubectl get pods -n country-availability` should show all pods `Running`.
-5. Open it: `kubectl -n country-availability port-forward svc/frontend 8080:80`, then `http://localhost:8080`.
+## More
 
-## CI/CD and rollback
-
-On every push to `main`, `.github/workflows/ci.yml` runs:
-
-1. **test** (also on pull requests): backend `import` check and a full Quasar build.
-2. **build**: builds the two images and pushes them to `ghcr.io/albertycl/country-availability-{backend,frontend}` tagged with the commit SHA and `latest`.
-3. **update-gitops**: runs `kustomize edit set image` in `manifests/country-availability/` of the GitOps repo and pushes a commit named `country-availability: deploy <sha>` using a deploy key (repo secret `GITOPS_DEPLOY_KEY`).
-4. Argo CD sees the commit and syncs (automated, with prune and self-heal).
-
-**Rollback:** `git revert` the `deploy <sha>` commit in `Albertycl/gitops-apps`. Do not use `kubectl rollout undo`; self-heal would undo it.
-
-## Monitoring and known limits
-
-- Monitoring that exists: container logs, the readiness probes, and the backend's scheduler status endpoint (`/be/scheduled/api/scheduler-health` through the frontend). There is no Prometheus endpoint and no alert rules for this app.
-- Probes are simulated; real probing needs your own SSH probe servers (the SSH password is read from `SSH_PASSWORD`). There are no automated tests: CI only checks that the backend imports and the frontend builds. Python dependencies are not pinned.
-- No authentication: do not expose it to the internet as is.
-- Single replica, no TLS, no ingress. The database runs in the same namespace on a 2 Gi volume and is not backed up.
-- Some leftover pages (`/old`, paping monitoring) come from the original project and are not part of the demo.
+[Full details](docs/DETAILS.md): install on Kubernetes, CI/CD, monitoring and known limits.
